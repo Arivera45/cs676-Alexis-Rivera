@@ -149,12 +149,9 @@ def fit_gradient_descent(X_design, y, lr=LEARNING_RATE, n_iter=N_ITERATIONS):
     """
     for _ in range(n_iter):
         y_pred = predict(X_design, beta)
-
         loss = mse(y, y_pred)
         history.append(loss)
-
         grad = gradient(X_design, y, beta)
-
         beta = beta - lr * grad
 
     return beta, history
