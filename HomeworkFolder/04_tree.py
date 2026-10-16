@@ -66,10 +66,35 @@ class SimpleDecisionTreeClassifier:
         # └──────────────────────────────────────────────────────────────────────
         # YOUR CODE HERE — the exhaustive split search
         # Delete the raise below once you have written it.
-        raise NotImplementedError(
-            "Homework: write the exhaustive split search. "
-            "See the YOUR TASK box just above for the steps."
-        )
+        for idx in range(n_features):
+            for threshold in np.unique(X[:, idx]):
+
+                # Split the data
+                left_indices = X[:, idx] <= threshold
+                right_indices = X[:, idx] > threshold
+
+                # Skip invalid splits
+                if np.sum(left_indices) == 0 or np.sum(right_indices) == 0:
+                    continue
+
+                # Labels for each side
+                left_y = y[left_indices]
+                right_y = y[right_indices]
+
+                n_left = len(left_y)
+                n_right = len(right_y)
+
+                # Weighted Gini impurity
+                weighted_gini = (
+                    n_left * self.gini(left_y) +
+                    n_right * self.gini(right_y)
+                ) / n_samples
+
+                # Keep best split found so far
+                if weighted_gini < best_gini:
+                    best_gini = weighted_gini
+                    best_idx = idx
+                    best_threshold = threshold
 
         return best_idx, best_threshold
 
