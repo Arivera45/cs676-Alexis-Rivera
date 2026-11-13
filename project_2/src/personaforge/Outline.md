@@ -1,4 +1,3 @@
-Notes added to the project by file.
 
 ## [src/personaforge/orchestrator.py](./src/personaforge/orchestrator.py)
 - Task 6: the bounded chat transcript and in-memory persona registry so the orchestrator remembers known personas without letting history grow without limit

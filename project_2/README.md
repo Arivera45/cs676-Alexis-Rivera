@@ -1,495 +1,186 @@
-# Project 2 — PersonaForge: An Agent-to-Agent Package
+> For a task-by-task outline of completed work, see [`src/personaforge/Outline.md`](src/personaforge/Outline.md).
 
-**CS676 Algorithms for Data Science · Pace University**
+# PersonaForge Project Report
 
-> **Weight: 30% of your course grade · 100 points · +5% bonus for a live public deployment**
->
-> **One deliverable, one deadline.** Due date: **[DEADLINES.md](https://github.com/yiqiao-yin/pace-u-cs676/blob/main/DEADLINES.md)** — the only place dates live. The parts below are where the marks are, not a schedule.
+**Course:** CS676 Algorithms for Data Science  
+**Project:** Project 2 — PersonaForge  
+**Date:** November 13, 2026
 
-Project 1 gave you a function to improve inside someone else's app. This one is
-different: **you are building a Python package.** You get a skeleton that runs, and
-your job is to turn it into something worth installing.
+## 1. Project overview
 
----
+PersonaForge is a Python command-line application for creating fictional personas
+and having them converse. A persona is stored as a Markdown file, an agent combines
+that persona with a language model, and the orchestrator routes user requests to
+persona creation, listing, or conversation actions.
 
-## Table of Contents
+The project extends the supplied package with model-assisted request routing,
+clarifying and ambiguity responses, persistent persona metadata, bounded context,
+conversation control heuristics, and a scripted offline mode for tests and demos.
+The scope is a small local simulation tool, not a clinical system or a general
+autonomous-agent framework.
 
-- [What it does](#what-it-does)
-- [⚠️ You need your own Anthropic API key](#-you-need-your-own-anthropic-api-key)
-- [Setup](#setup) — [macOS / Linux](#macos--linux) · [Windows](#windows)
-- [Run it](#run-it)
-- [How it works](#how-it-works)
-- [Project layout](#project-layout)
-- [Running the tests](#running-the-tests)
-- [What to build](#what-to-build)
-- [Deliverables and grading](#deliverables-and-grading)
-- [Bonus: deploy it publicly (+5%)](#bonus-deploy-it-publicly-5)
-- [Troubleshooting](#troubleshooting)
+## 2. Architecture
 
----
+The package uses a `src/personaforge/` layout. The root `main.py` is a thin entry
+point; application logic remains in the package.
 
-## What it does
+- **`cli.py` and `ui.py`:** Load environment settings, parse command-line options,
+  run the interactive terminal loop, and render prompts, responses, and errors.
+- **`llm.py`:** Defines the shared `LLM` protocol, the Anthropic-backed `ClaudeLLM`,
+  the call-recording `ScriptedLLM` for tests, and `DemoLLM` for offline use.
+- **`persona.py`:** Defines `PersonaSpec`, generates personas from model output,
+  serializes persona metadata and body to Markdown, and loads, lists, finds, and
+  saves persona files.
+- **`agent.py`:** Builds an in-character prompt, prepares the conversation context,
+  provides memory and response-control helpers, and applies a basic output guard.
+- **`conversation.py`:** Runs a fixed round-robin exchange, emits turns to the UI,
+  renders transcripts, and saves them.
+- **`orchestrator.py`:** Routes user requests, dispatches supported actions, asks for
+  missing details or participant choices, and retains bounded stage-manager history.
 
-You talk to an agent in your terminal. You ask it to invent characters. Then you make
-those characters talk to each other and watch what happens.
+### Request and conversation flow
 
-```
-you › create a persona patient with chronic back pain who distrusts doctors
+1. The CLI passes a user message to `Orchestrator.handle()`.
+2. The orchestrator asks the model to return a JSON request matching one of three
+   tool-like schemas: create a persona, list personas, or start a conversation.
+   The application parses and dispatches that JSON itself; this is prompt-based
+   routing, not Anthropic's native tool-use API.
+3. If the response is not a recognized request, the orchestrator uses a
+   regular-expression fallback for common commands or sends the text to the
+   stage-manager chat path.
+4. For a conversation, each agent receives the shared transcript rewritten from
+   its point of view. Its own previous lines are assistant messages, while other
+   speakers' lines are user messages.
+5. The conversation is rendered in the terminal and written to
+   `temp/conversation.md` by default.
 
-stage › Created Maria Delgado (patient) — 58-year-old with chronic lumbar pain
-  · wrote temp/maria-delgado.md
+## 3. Implemented behavior and design choices
 
-you › create a persona doctor who is direct and running forty minutes late
+- **Model abstraction:** Tests and offline use do not require a key or network
+  access. Online mode uses `ClaudeLLM`; the selected model can be overridden with
+  `--model`.
+- **Persona files:** Persona metadata and body are stored in Markdown. The schema
+  includes an optional memory field, and the parser tolerates a missing closing
+  frontmatter fence and model output wrapped in a code fence.
+- **Routing:** The model-selected JSON request supports persona creation, listing,
+  and conversation startup. A legacy regex path remains as a fallback. Blank
+  creation requests ask what kind of persona is wanted; chained commands are split
+  and handled in order.
+- **Participant and turn handling:** The user can specify the turn count. When more
+  than two personas exist and participants are omitted, the application asks which
+  personas should participate rather than silently selecting the first two.
+- **Bounded context:** The agent keeps a recent-turn window and summarizes older
+  lines. The stage-manager history is also capped, and known persona names are
+  included separately from that chat history.
+- **Agent controls and role guard:** Simple phrase checks can choose a speak,
+  silence, pause, or end response. A lightweight output check rejects empty replies
+  and certain meta-AI phrases.
+- **Offline dialogue ordering:** `DemoLLM` now advances its canned dialogue only
+  for character replies, not for routing, persona-authoring, or stage-manager calls.
+  A regression test covers setup calls before the first dialogue turn.
+- **Secret handling:** Online mode reads `ANTHROPIC_API_KEY` from the environment;
+  the local `.env` file is intended for development and is ignored by Git. It must
+  not be committed or included in this report.
 
-stage › Created Dr. Samuel Reyes (doctor) — overbooked internist, blunt bedside manner
-  · wrote temp/dr-samuel-reyes.md
+These choices favor a small, testable package and a quick demonstration over a more
+complex conversation manager or persistence service.
 
-you › have them talk about the MRI results
+## 4. Validation and observed demonstrations
 
-── conversation: the mri results ──
+### Automated tests
 
-Maria Delgado: I've been waiting three weeks for someone to tell me what this means.
-Dr. Samuel Reyes: I know, and I'm sorry about that. Let me pull it up now.
-...
-```
-
-Each persona is **a markdown file on disk**. Open `temp/maria-delgado.md` in an editor,
-change a line, and she behaves differently next run. That is the whole architecture:
-a persona is a file, an agent is that file plus a model, a conversation is agents
-taking turns.
-
----
-
-## ⚠️ You need your own Anthropic API key
-
-**Personas and conversations do not work without one.** Get a key at
-[console.anthropic.com](https://console.anthropic.com/), then copy `.env.example` to
-`.env` and paste it in. The key is yours and **the calls are billed to your account**.
-
-Budget for it: **one API call per conversation turn**, plus one per persona you
-create. A six-turn conversation between two personas you just made is eight calls. Use
-`--model claude-haiku-4-5` while iterating.
-
-You can build almost all of this project without spending anything:
-
-| Works with no key | Needs your key |
-| --- | --- |
-| `uv run pytest` — all 39 tests | `uv run main.py` (no flag) |
-| `uv run main.py --offline` — the entire app | real personas written by Claude |
-| every module you are asked to extend | real agent-to-agent dialogue |
-
-`--offline` swaps in a scripted model, so you can create personas, list them, and run
-conversations for free. Use it for everything except prompt quality.
-
-### A bug worth knowing about
-
-The live path has been run end to end — personas authored, saved, and holding character
-across a multi-turn conversation. One bug surfaced doing it, and it is instructive.
-
-**The model intermittently omits the closing `---` of the frontmatter.** Roughly one
-persona in three. The parser required it, so the whole document fell through to the
-fallback and you got a character called `Unnamed` with `role: unknown` — no error, no
-warning, just a broken persona.
-
-The parser now tolerates it. But notice the shape of the failure: the model was not
-wrong in any way a human would care about, the output was perfectly readable, and the
-code was strict about something that did not matter. **You will hit this class of bug
-constantly when a model is producing structured text.** Decide what your code should be
-strict about, and be generous about everything else.
-
----
-
-## Setup
-
-You need **Python 3.10+**, **git**, and **[uv](https://docs.astral.sh/uv/)**.
-
-This project is `uv`-native. If you do not have uv:
-
-```bash
-# macOS / Linux
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Windows (PowerShell)
-powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-```
-
-### macOS / Linux
-
-```bash
-git clone https://github.com/yiqiao-yin/pace-u-cs676.git
-cd pace-u-cs676/deliverable/project_2
-
-uv sync                 # creates .venv and installs everything, including the package itself
-cp .env.example .env
-nano .env               # add your ANTHROPIC_API_KEY
-```
-
-### Windows
-
-Use **PowerShell**.
+The full test suite was run with:
 
 ```powershell
-git clone https://github.com/yiqiao-yin/pace-u-cs676.git
-cd pace-u-cs676\deliverable\project_2
-
-uv sync
-copy .env.example .env
-notepad .env
+uv run pytest
 ```
 
-You never need to activate the virtual environment manually — `uv run` handles it.
+The observed result was **52 passed in 0.33 seconds**. The suite covers the agent,
+conversation loop and orchestrator, language-model adapters, and persona parsing and
+storage. Tests use scripted responses so they do not call the paid API.
 
-**What `uv sync` does.** It reads `pyproject.toml` for the dependency list and
-`uv.lock` for the exact version of every package those dependencies pull in — 29 of
-them here, most of which you never named. Both files are committed, so you install the
-same versions as everyone else, and `uv.lock` is why a run of yours and a run of a
-classmate's behave the same way.
+### Manual behavior checks
 
-It also installs `personaforge` itself, from `src/`, in editable form. That is what
-makes `from personaforge.agent import Agent` work from anywhere in the project, and
-why a bare `python main.py` fails where `uv run main.py` succeeds — the package is on
-the path only inside the environment uv built.
+- In offline mode, a blank persona request returned a clarifying question.
+- When several personas existed and none were named for a conversation, the
+  orchestrator asked which participants to use.
+- A request naming an unknown persona returned a not-found message.
+- An online run successfully created **Dr. Elena Park** and **Ava Thompson**, then
+  produced a conversation saved to `temp/conversation.md`.
+- The current online transcript is two turns. Dr. Park opens by asking about the
+  listener's concerns; Ava responds at length with stage directions and speaks as
+  though a patient is present, even though the listed participants are Dr. Park and
+  Ava. This confirms that generation and saving work, while also showing that the
+  output does not consistently stay within the intended interaction or role.
 
-If you add a dependency, use `uv add <package>` rather than editing `pyproject.toml`
-by hand; it updates the lock in the same step. Commit both files together.
+The `0 turns` edge case was not isolated: the test command encountered the
+multiple-persona selection prompt first, so that run does not establish how zero is
+handled in an otherwise valid conversation.
 
----
+## 5. Failure analysis and remaining limitations
 
-## Run it
+The project is functional, but several behaviors remain heuristic or incomplete:
 
-**Start here. This works on a fresh clone with nothing edited, needs no API key, and
-costs nothing:**
+- **Role and content drift:** The output guard looks for a short list of meta-AI
+  phrases; it does not judge whether the response fits the persona's role, whether
+  it speaks for another participant, or whether stage directions appear. The
+  online transcript demonstrates this limitation.
+- **Routing limitations:** Routing depends on the model returning parseable JSON.
+  The regex fallback only recognizes common phrasings. It is not a general natural
+  language command parser, and the router does not use native provider tool calls.
+- **Persona lookup and file collisions:** `find_persona()` accepts substring
+  matches, which can select the wrong persona. Saving two personas with the same
+  slug overwrites the existing file.
+- **Persona validation and editing:** Generated Markdown is parsed with a small
+  custom parser and receives only a minimal fallback when the name is missing.
+  There is no strict validation of required sections and no in-app persona editor.
+- **Memory persistence:** The persona schema can serialize memory, and an agent can
+  add a fact to its in-memory spec. A conversation does not automatically extract
+  memories or save them back to the persona file.
+- **Conversation policy:** Speakers take fixed round-robin turns and the loop ends
+  after a fixed count. The response-control heuristics return pause/end text but do
+  not make the conversation loop stop early. There is no observer or evaluator to
+  decide whether the topic was resolved.
+- **Transcript retention:** The default filename is always `conversation.md`, so a
+  later conversation can replace the earlier transcript.
+- **API and runtime failures:** The missing-key error gives setup guidance, and the
+  CLI displays exceptions rather than closing the interactive session. There are
+  no automatic retries or recovery of an interrupted conversation's partial turns.
+- **Cost:** Online routing, persona generation, and each generated conversation
+  turn may each require a paid model call. Shorter conversations and the offline
+  mode reduce cost during development.
 
-```bash
+The remaining numbered task comments in the source files should be read as design
+notes or known limitations where applicable, not as evidence that every listed
+issue has been implemented.
+
+## 6. Running the application
+
+From the project directory:
+
+```powershell
+uv sync
 uv run main.py --offline
 ```
 
-Offline mode swaps the real model for a scripted one that replays canned dialogue. The
-whole app works — you can create personas, list them, and run a conversation — you just
-get fixed replies. It exists so you can see the shape of the thing on day one.
+Offline mode requires no key and uses scripted persona and dialogue responses. For
+online use, put `ANTHROPIC_API_KEY=...` in a private `.env` file in the project
+directory, then run:
 
-### What a working session looks like
-
-Type these four lines at the `you ›` prompt:
-
-```
-create a persona patient with chronic back pain
-create a persona doctor who is direct and busy
-list personas
-have them talk about the test results
+```powershell
+uv run main.py --model claude-haiku-4-5
 ```
 
-You should see personas written to disk, then a conversation between them:
-
-```
-stage › Created Patient With Chronic Back Pain (patient) — a demo persona ...
-  · wrote temp/patient-with-chronic-back-pain.md
-
-stage › 2 persona(s) in temp:
- • Doctor Who Is Direct And Busy (doctor) — a demo persona generated in offline mode
- • Patient With Chronic Back Pain (patient) — a demo persona generated in offline mode
-
-── conversation: the test results ──
-
-Doctor Who Is Direct And Busy: Have you noticed anything that makes it better or worse?
-Patient With Chronic Back Pain: Coffee seems to make it worse, and lying down helps a little.
-...
-
-stage › 6 turns between Doctor Who Is Direct And Busy and Patient With Chronic Back Pain.
-  · wrote temp/conversation.md
-```
-
-The replies are canned, but everything else is real: the personas are actual markdown
-files in `temp/`, and the transcript is written to `temp/conversation.md`. Open them.
-
-### ⚠️ The phrasing matters, and that is the assignment
-
-Say this instead:
-
-```
-create a skeptical data scientist named Ada
-```
-
-and you get back a shrug:
-
-```
-stage › Offline mode — I'm a stub. Try: create a persona doctor
-```
-
-**Nothing is broken.** `orchestrator.py` routes what you type with hand-written regular
-expressions, so it only recognises phrasings close to the ones above — `create a persona
-...`, `list personas`, `have them talk about ...`. Anything else falls through to a
-default.
-
-That brittleness is deliberate, and replacing it is the headline task of this project
-(see [What to build](#what-to-build)). Expect to hit it in your first five minutes; it
-is the problem statement introducing itself, not a bug to report.
-
-**Then with a real model:**
-
-```bash
-uv run main.py
-```
-
-Useful flags:
-
-| Flag | Effect |
-|---|---|
-| `--offline` | scripted replies, no API key, no cost |
-| `--model claude-haiku-4-5` | cheaper model while developing |
-| `--persona-dir mydir` | store personas somewhere other than `temp/` |
-
-Inside the app: `/help`, `/clear`, `/quit`.
-
----
-
-## How it works
-
-Four ideas, one per module.
-
-**A persona is a markdown file** (`persona.py`). Frontmatter for the fields the code
-indexes on, markdown body for everything the model reads:
-
-```markdown
----
-name: Maria Delgado
-role: patient
-summary: 58-year-old with chronic lumbar pain
----
-
-# Maria Delgado
-
-## Background
-Retired schoolteacher, diagnosed eight years ago...
-
-## How they speak
-- Long sentences, lots of context before the point
-```
-
-**An agent is that file plus a model** (`agent.py`). `PersonaAgent.system_prompt()`
-wraps the markdown body in in-character instructions. Nothing else distinguishes the
-doctor from the patient — same class, same model, different file.
-
-**A conversation is agents taking turns** (`conversation.py`). Each agent sees the
-transcript rewritten from its own point of view: its lines as `assistant`, everyone
-else's as `user`. That is what makes it feel like a participant rather than something
-reading a script.
-
-**The orchestrator decides what you meant** (`orchestrator.py`). You type "I want to
-create a persona patient" and something maps that to `create_persona("patient")`.
-Right now that something is **a pile of regular expressions**. See
-[What to build](#what-to-build).
-
-`llm.py` sits under all of it with two implementations — `ClaudeLLM` and `ScriptedLLM`
-— behind one `complete()` method. That split is why the tests are fast and free.
-
----
-
-## Project layout
-
-```
-project_2/
-├── main.py                     entry point — thin wrapper
-├── pyproject.toml              uv project, src layout, deps, pytest config
-├── src/personaforge/           THE PACKAGE — your work goes here
-│   ├── __init__.py             public API
-│   ├── llm.py                  ClaudeLLM / ScriptedLLM behind one protocol
-│   ├── persona.py              PersonaSpec, generate/save/load/find
-│   ├── agent.py                markdown + model = a mind
-│   ├── conversation.py         the turn loop
-│   ├── orchestrator.py         intent routing  ← the weakest part
-│   ├── ui.py                   terminal rendering (rich)
-│   └── cli.py                  the REPL
-├── tests/                      pytest, all offline
-│   ├── test_llm.py
-│   ├── test_persona.py
-│   ├── test_agent.py
-│   └── test_conversation.py
-└── temp/                       personas and transcripts land here (gitignored)
-```
-
-Every module ends with a **YOUR TASK** comment block listing what is wrong with it.
-Those lists are the assignment. Read all six before you plan your work.
-
----
-
-## Running the tests
-
-```bash
-uv run pytest              # all of them
-uv run pytest -v           # with names
-uv run pytest tests/test_persona.py
-```
-
-**39 tests, no API key, well under a second.** They pass on a fresh clone — if they do not,
-your environment is wrong, not your code.
-
-They run offline because every test injects `ScriptedLLM` instead of calling Claude.
-When you add features, add tests the same way. **A pull request full of code and no
-tests is not a finished pull request**, and that principle is worth points here.
-
----
-
-## What to build
-
-The skeleton runs end to end and is deliberately shallow. Roughly ordered by payoff:
-
-### 1. Replace the regex router with real tool use
-
-`orchestrator.handle()` is a stack of `re.search` calls. It cannot ask a clarifying
-question, cannot handle "make it two doctors and a nurse and have them argue", and
-breaks the moment you phrase something a way the author didn't anticipate.
-
-A real agent hands Claude a set of tools and lets the model choose. The tool schemas
-you need are sketched in a comment at the bottom of `orchestrator.py`. This single
-change turns a command parser into an agent, and it is the most valuable thing you can
-do in this project.
-
-### 2. Give agents memory
-
-Agents are stateless between conversations. Run the same doctor twice and they will not
-remember the first patient. Where should that memory live — appended back into the
-persona's own `.md` file, or somewhere new? Whichever you choose, defend it.
-
-### 3. Make turn-taking interesting
-
-Right now it is strict round-robin for a fixed number of turns. Real conversations are
-not polite. Who decides who speaks next? Can an agent stay silent? Can it end the
-conversation because the question got answered?
-
-### 4. Add an observer
-
-Nobody watches the conversation. A third agent could summarize it, score whether the
-doctor actually answered the patient's question, or flag when someone broke character.
-This is the natural bridge to the AI-judge requirement in
-[`docs/14_final_guidance.md`](../../docs/14_final_guidance.md).
-
-### 5. Make it a package someone else could use
-
-It is called a package, so treat it like one: a clean public API in `__init__.py`,
-docstrings that explain intent, errors that say what to do next, and a version number
-that means something. Someone should be able to `import personaforge` and build
-something you did not anticipate.
-
-**You do not have to do all five.** A depth-first project that does one of these
-properly beats five half-finished ones. Choose, and justify the choice in your report.
-
----
-
-## Deliverables and grading
-
-**100 points total = 30% of your course grade**, plus a **+5% bonus** for a Hugging
-Face deployment.
-
-**This project has one deliverable and one deadline.** You submit once, through the
-course form. The date is in [DEADLINES.md](https://github.com/yiqiao-yin/pace-u-cs676/blob/main/DEADLINES.md) — the only place deadlines live.
-
-The three parts below are **where the marks are**, not a schedule. Work through them in
-any order, or all at once — nothing is graded on when you did which piece.
-
-### Part 1 — Working package (25 points)
-
-| | Points |
-|---|---|
-| `uv sync && uv run main.py` works on a clean clone | 6 |
-| At least one substantive extension beyond the skeleton | 9 |
-| Your own tests for what you added, passing | 6 |
-| Package structure stays coherent — no logic dumped into `main.py` | 4 |
-
-### Part 2 — Beta version and technical report (35 points)
-
-| | Points |
-|---|---|
-| Design write-up: what you changed and why | 10 |
-| A saved transcript your system produced, with commentary on what worked | 8 |
-| Honest failure analysis — where agents break character, lose the thread, or cost too much | 9 |
-| Test coverage of the parts you own | 8 |
-
-### Part 3 — Final container-ready app (40 points)
-
-| | Points |
-|---|---|
-| Feature completeness against your own stated scope | 12 |
-| Code quality: comments at course standard, clear naming, no dead code | 8 |
-| Robustness — bad input, missing personas, API failures handled | 8 |
-| Novelty, defended in the presentation | 7 |
-| Live demo runs during your slot | 5 |
-
----
-
-## Bonus: deploy it publicly (+5%)
-
-Worth **an extra 5% on your course grade**. **Any host is fine** — the marks are for a
-working public link with the API key handled properly, not for a particular vendor.
-
-**This is optional and it must not cost you anything.** If a platform asks you to
-upgrade to a paid plan, stop, and say so in your report. You lose nothing.
-
-The catch specific to this project: it is a *terminal* app, and hosts serve web pages.
-So you need a thin web front end over the package. Two honest options:
-
-1. **Wrap it in a web UI.** Add a Gradio or Streamlit front end that calls the same
-   `personaforge` package. If your package boundaries are clean this is a small file —
-   which is rather the point of having built a package. `deliverable/project_1/app.py`
-   is a worked example of exactly this shape: a Gradio UI over a separate backend
-   module, with no logic of its own.
-2. **Ship the package and a browser chat.** Gradio can render a chat interface that
-   drives the orchestrator directly.
-
-**Streamlit Community Cloud is the easiest free route** if you write a Streamlit
-wrapper: it is free, it reads your public GitHub repo, and you point it at your app
-file. Put your key in its **Secrets** box at the top level of the TOML —
-
-```toml
-ANTHROPIC_API_KEY = "sk-ant-..."
-```
-
-— because Streamlit exposes root-level secrets as environment variables, which is what
-`llm.py` reads. Nested under a `[section]` it will not be found.
-
-**A note on Hugging Face Spaces,** since it is the better-known option: there is no
-Streamlit SDK any more, and **both Gradio and Docker Spaces require a paid plan to
-create** ($9/month). The one free exception is a Gradio Space on **ZeroGPU** hardware,
-limited to 2, and only for accounts **older than 30 days with a verified email** — so if
-you made your account for this course, it is not available to you. Use another host
-rather than paying.
-
-**You will need a `requirements.txt`, and this project does not ship one.** Hosts install
-dependencies from that file; none of them read `uv.lock`. Generate one from the lock so
-your deployment gets the versions you actually tested against:
-
-```bash
-uv export --no-dev --no-emit-project --no-hashes -o requirements.txt
-```
-
-`--no-dev` leaves out pytest, and `--no-emit-project` leaves out `personaforge` itself —
-no host can install it from PyPI, so ship the `src/personaforge/` directory alongside
-your app file instead. Add whichever front end you chose (`gradio` or `streamlit`) to
-that file by hand; it is a dependency of your deployment, not of this package.
-
-**Never commit your key** — a key pushed to a public repository must be revoked
-immediately. Submit the public URL alongside your other deliverables.
-
-## Troubleshooting
-
-**`uv: command not found`**
-Install it with the command in [Setup](#setup), then restart your terminal.
-
-**`ModuleNotFoundError: No module named 'personaforge'`**
-Run through `uv run`, not a bare `python main.py`. `uv run main.py` puts the installed
-package on the path; plain `python` does not.
-
-**`RuntimeError: ANTHROPIC_API_KEY is not set`**
-Either add the key to `.env`, or run `uv run main.py --offline`. The file must be named
-exactly `.env` — Windows Notepad silently saves `.env.txt`.
-
-**The app runs but every reply is the same canned line**
-You are in offline mode. Drop `--offline`.
-
-**Conversations cost more than expected**
-Every turn is one API call, so a six-turn conversation is six calls plus one per
-persona created. Use `--model claude-haiku-4-5` while developing, and `--offline` when
-you are working on anything that isn't prompt quality.
-
-**Personas from an old run keep showing up**
-They are files. `rm temp/*.md` (macOS/Linux) or `del temp\*.md` (Windows).
+Do not commit `.env`; keep `.env.example` as a placeholder template. Model calls
+may incur charges.
+
+## 7. Summary
+
+PersonaForge demonstrates a coherent Python package with a terminal interface,
+file-backed persona definitions, model-backed persona and dialogue generation,
+offline testing, and saved transcripts. The full automated suite passes, and an
+online end-to-end run was completed. Its strongest current limitations are
+semantic role adherence, ambiguous persona lookup, overwritten persona/transcript
+files, and the lack of conversation-level evaluation or failure recovery. These
+limitations define the next improvements and are important qualifications when
+presenting the system's results.
