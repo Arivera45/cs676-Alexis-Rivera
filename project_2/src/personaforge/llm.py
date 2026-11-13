@@ -154,6 +154,7 @@ class DemoLLM:
     """
 
     calls: List[Dict[str, Any]] = field(default_factory=list)
+    _dialogue_index: int = field(default=0, init=False, repr=False)
 
     def complete(self, system: str, messages: List[Dict[str, str]], max_tokens: int = 2048) -> str:
         self.calls.append({"system": system, "messages": list(messages)})
@@ -169,7 +170,13 @@ class DemoLLM:
         if "stage manager" in system.lower():
             return "Offline mode — I'm a stub. Try: create a persona doctor"
 
-        return _DEMO_DIALOGUE[(len(self.calls) - 1) % len(_DEMO_DIALOGUE)]
+        if "router for a persona simulation app" in system.lower():
+            return "{}"
+
+        # Router and persona-author calls must not shift which character speaks first.
+        reply = _DEMO_DIALOGUE[self._dialogue_index % len(_DEMO_DIALOGUE)]
+        self._dialogue_index += 1
+        return reply
 
 
 def default_llm(offline: bool = False, model: Optional[str] = None) -> LLM:

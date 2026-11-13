@@ -113,11 +113,34 @@ def test_list_personas_when_empty(tmp_path):
     assert "No personas yet" in orch.handle("list personas").reply
 
 
+def test_sequence_command_lists_then_converses(tmp_path):
+    for name, role in [("Alice Adams", "doctor"), ("Bob Brown", "patient")]:
+        save_persona(PersonaSpec(name=name, role=role, summary="", body="b"), tmp_path)
+
+    orch = Orchestrator(llm=ScriptedLLM(replies=["a line"]), persona_dir=tmp_path)
+    result = orch.handle("list personas then have them talk about the weather")
+
+    assert "Alice Adams" in result.reply
+    assert result.conversation is not None
+    assert len(result.conversation.turns) == 6
+
+
 def test_conversation_requires_two_personas(tmp_path):
     save_persona(PersonaSpec(name="Solo", role="patient", summary="", body="b"), tmp_path)
     orch = Orchestrator(llm=ScriptedLLM(), persona_dir=tmp_path)
 
     assert "at least two" in orch.handle("have them talk about the weather").reply
+
+
+def test_conversation_asks_which_two_when_many_personas_exist(tmp_path):
+    for name, role in [("Alice Adams", "doctor"), ("Bob Brown", "patient"), ("Carol Chen", "nurse")]:
+        save_persona(PersonaSpec(name=name, role=role, summary="", body="b"), tmp_path)
+
+    orch = Orchestrator(llm=ScriptedLLM(), persona_dir=tmp_path)
+    result = orch.handle("have them talk about the weather")
+
+    assert "Which two" in result.reply
+    assert result.conversation is None
 
 
 def test_conversation_runs_with_two_personas(tmp_path):
@@ -130,6 +153,32 @@ def test_conversation_runs_with_two_personas(tmp_path):
     assert result.conversation is not None
     assert len(result.conversation.turns) == 6
     assert (tmp_path / "conversation.md").exists()
+
+
+def test_conversation_turn_count_can_be_set_in_the_prompt(tmp_path):
+    for name, role in [("Alice Adams", "doctor"), ("Bob Brown", "patient")]:
+        save_persona(PersonaSpec(name=name, role=role, summary="", body="b"), tmp_path)
+
+    orch = Orchestrator(llm=ScriptedLLM(replies=["a line"]), persona_dir=tmp_path)
+    result = orch.handle("have them talk about the test results for 4 turns")
+
+    assert result.conversation is not None
+    assert len(result.conversation.turns) == 4
+
+
+def test_tool_router_can_create_persona_from_json(tmp_path):
+    llm = ScriptedLLM(
+        replies=[
+            '{"tool": "create_persona", "arguments": {"description": "patient with back pain"}}',
+            PERSONA_MD.format(name="Maria Delgado", role="patient"),
+        ]
+    )
+    orch = Orchestrator(llm=llm, persona_dir=tmp_path)
+
+    result = orch.handle("make a new persona")
+
+    assert "Maria Delgado" in result.reply
+    assert (tmp_path / "maria-delgado.md").exists()
 
 
 def test_named_participants_are_resolved(tmp_path):
@@ -151,6 +200,17 @@ def test_unknown_participant_is_reported(tmp_path):
     result = orch.handle("start a conversation between Zaphod and Bob about lunch")
 
     assert "couldn't find" in result.reply
+
+
+def test_history_is_bounded_and_persona_memory_is_loaded(tmp_path):
+    save_persona(PersonaSpec(name="Alice Adams", role="doctor", summary="", body="b"), tmp_path)
+    orch = Orchestrator(llm=ScriptedLLM(replies=["still here"]), persona_dir=tmp_path)
+
+    for idx in range(25):
+        orch._chat(f"hello {idx}")
+
+    assert len(orch.history) <= 20
+    assert any("Alice Adams" in entry for entry in orch.persona_memory)
 
 
 def test_unmatched_input_falls_through_to_chat(tmp_path):

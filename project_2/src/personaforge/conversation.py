@@ -59,9 +59,23 @@ def run_conversation(
 
     # The topic is injected as a scene-setting turn from a narrator. Every agent
     # sees it as context but nobody has to answer it directly.
+    #
+    # Task 1: turn-taking is strict round-robin. A real conversation would need a
+    # policy for who speaks next — a hand-coded rule or a model-driven selector.
+    #
+    # Task 2: the loop ends after N turns even if the conversation is still
+    # unresolved. A production version would need a stopping rule such as
+    # "topic covered", "consensus reached", or "repetition detected".
+    #
+    # Task 3: the "Scene" token is a fake speaker used to inject the topic. It is a
+    # useful hack, but a cleaner design would represent the scene separately from
+    # the dialogue itself.
     history: List[Turn] = [Turn(speaker="Scene", text=topic)]
 
     for i in range(turns):
+        # Task 4: no observer exists here. A third agent or evaluator could watch the
+        # dialogue, summarize it, or score whether a follow-up question was actually
+        # answered.
         speaker = agents[i % len(agents)]
         text = speaker.respond(history)
         turn = Turn(speaker=speaker.name, text=text)
@@ -77,6 +91,9 @@ def run_conversation(
 
 def save_transcript(conversation: Conversation, directory, filename: Optional[str] = None):
     """Write the transcript to disk next to the personas that produced it."""
+    # Task 5: this helper always writes to the same default filename, so each new
+    # transcript overwrites the prior one. A data-workflow version would add a
+    # timestamped filename or a run ID to preserve experiment history.
     from pathlib import Path
 
     directory = Path(directory)

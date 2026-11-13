@@ -44,19 +44,28 @@ class PersonaSpec:
     role: str
     summary: str
     body: str  # markdown; becomes the agent's system prompt
+    memory: str = ""  # persistent facts the persona should keep between conversations
 
     def slug(self) -> str:
         """Filesystem-safe stem, e.g. 'Maria Delgado' -> 'maria-delgado'."""
+        # Task 2 matters here: slug collisions are the exact moment a persona is
+        # silently overwritten. A practical fix would be to add a disambiguating
+        # suffix or reject duplicate names when saving.
         s = re.sub(r"[^a-z0-9]+", "-", self.name.lower()).strip("-")
         return s or "unnamed"
 
     def to_markdown(self) -> str:
         """Serialize to the frontmatter + body format shown above."""
+        # Task 3 and task 6 both point at the same design tension: persona state is
+        # a file on disk, so the file format should be explicit and stable enough to
+        # carry both metadata and learned memory without ambiguous parsing.
+        memory = f"memory: {self.memory}\n" if self.memory.strip() else ""
         return (
             "---\n"
             f"name: {self.name}\n"
             f"role: {self.role}\n"
             f"summary: {self.summary}\n"
+            f"{memory}"
             "---\n\n"
             f"{self.body.strip()}\n"
         )
@@ -69,7 +78,11 @@ class PersonaSpec:
         Missing frontmatter is tolerated: we fall back to sensible defaults and
         treat the whole file as the body, so a hand-written persona still loads.
         """
-        meta = {"name": "Unnamed", "role": "unknown", "summary": ""}
+        # Task 3 is the core parser issue here. The app accepts a tiny subset of
+        # YAML-style frontmatter, but a real parser would need to handle quoting,
+        # multiline values, and malformed metadata without silently misreading the
+        # file.
+        meta = {"name": "Unnamed", "role": "unknown", "summary": "", "memory": ""}
         text = text.strip()
 
         # Models sometimes wrap the whole document in a code fence.
@@ -109,11 +122,19 @@ class PersonaSpec:
                     if key in meta:
                         meta[key] = value.strip()
 
-        return cls(name=meta["name"], role=meta["role"], summary=meta["summary"], body=body.strip())
+        return cls(
+            name=meta["name"],
+            role=meta["role"],
+            summary=meta["summary"],
+            body=body.strip(),
+            memory=meta["memory"],
+        )
 
 
 def save_persona(spec: PersonaSpec, directory: Path = DEFAULT_PERSONA_DIR) -> Path:
     """Write the persona to `<directory>/<slug>.md`, creating the folder if needed."""
+    # Task 2: file writes are currently destructive. A better implementation would
+    # detect duplicates and ask whether to overwrite, rename, or merge.
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"{spec.slug()}.md"
@@ -141,6 +162,8 @@ def find_persona(name: str, directory: Path = DEFAULT_PERSONA_DIR) -> Optional[P
     Users type "the doctor" or "maria", not exact filenames, so we accept a
     loose match. This is crude; see YOUR TASK.
     """
+    # Task 1: substring matching is too permissive. If there are multiple matches,
+    # the function should either ask for clarification or require an exact match.
     needle = name.strip().lower()
     for spec in list_personas(directory):
         if needle in (spec.name.lower(), spec.slug(), spec.role.lower()):
@@ -197,6 +220,10 @@ def generate_persona(description: str, llm: LLM) -> PersonaSpec:
     :param llm:         any LLM implementation (real or scripted)
     :return:            the parsed PersonaSpec — not yet saved to disk
     """
+    # Task 4 is the process gap here: the model returns a markdown document, but
+    # the code never validates the structure beyond a minimal fallback. A robust
+    # workflow would check that required keys exist and that the body contains the
+    # expected sections before accepting the persona.
     markdown = llm.complete(
         system=_AUTHOR_SYSTEM,
         messages=[{"role": "user", "content": f"Write a persona for: {description}"}],

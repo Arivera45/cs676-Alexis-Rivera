@@ -42,6 +42,26 @@ def test_demo_llm_returns_dialogue_for_a_persona_prompt():
     assert len(reply) > 0
 
 
+def test_demo_dialogue_starts_in_order_after_setup_calls():
+    llm = DemoLLM()
+    llm.complete(
+        "You are a router for a persona simulation app. Return valid JSON only.",
+        [{"role": "user", "content": "create a persona"}],
+    )
+    llm.complete(
+        "You write character specifications. role: <one lowercase word",
+        [{"role": "user", "content": "Write a persona for: patient with back pain"}],
+    )
+    llm.complete(_STAGE_MANAGER_SYSTEM, [{"role": "user", "content": "list personas"}])
+
+    first_line = llm.complete(
+        "You are role-playing a character...",
+        [{"role": "user", "content": "Scene: test results"}],
+    )
+
+    assert first_line == "I understand. Could you tell me more about when the symptoms started?"
+
+
 def test_demo_llm_answers_the_stage_manager():
     llm = DemoLLM()
     reply = llm.complete(_STAGE_MANAGER_SYSTEM, [{"role": "user", "content": "what is this?"}])
