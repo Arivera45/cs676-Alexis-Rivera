@@ -102,11 +102,8 @@ def assign_clusters(X, centroids):
     # └──────────────────────────────────────────────────────────────────────────
     # YOUR CODE HERE — the assign step
     # Delete the raise below once you have written it.
-    raise NotImplementedError(
-        "Homework: write the assign step. "
-        "See the YOUR TASK box just above for the steps."
-    )
-
+    distances = np.sum((X[:, None, :] - centroids[None, :, :]) ** 2, axis=2)
+    return np.argmin(distances, axis=1)
 
 def update_centroids(X, labels, k, centroids):
     """
@@ -139,10 +136,18 @@ def update_centroids(X, labels, k, centroids):
     # └──────────────────────────────────────────────────────────────────────────
     # YOUR CODE HERE — the update step
     # Delete the raise below once you have written it.
-    raise NotImplementedError(
-        "Homework: write the update step. "
-        "See the YOUR TASK box just above for the steps."
-    )
+    new_centroids = centroids.copy()
+
+    for j in range(k):
+        members = X[labels == j]
+
+        if len(members) > 0:
+            new_centroids[j] = members.mean(axis=0)
+        else:
+            # keep old centroid if cluster is empty
+            new_centroids[j] = centroids[j]
+
+    return new_centroids
 
 
 def inertia(X, labels, centroids):
@@ -187,13 +192,26 @@ def fit_kmeans(X, k, rng, max_iter=MAX_ITERATIONS):
     # └──────────────────────────────────────────────────────────────────────────
     # YOUR CODE HERE — the assign / update loop
     # Delete the raise below once you have written it.
-    raise NotImplementedError(
-        "Homework: write the assign / update loop. "
-        "See the YOUR TASK box just above for the steps."
-    )
+    centroids = init_centroids(X, k, rng)
+    labels = np.full(len(X), -1)
+    history = []
+
+    for _ in range(max_iter):
+
+        new_labels = assign_clusters(X, centroids)
+
+        if np.array_equal(new_labels, labels):
+            labels = new_labels
+            history.append(inertia(X, labels, centroids))
+            break
+
+        labels = new_labels
+
+        centroids = update_centroids(X, labels, k, centroids)
+
+        history.append(inertia(X, labels, centroids))
 
     return centroids, labels, history
-
 
 # ---------------------------------------------------------------------------
 # A WARNING ABOUT THIS ALGORITHM — read this once your loop works
